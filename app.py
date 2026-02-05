@@ -68,7 +68,7 @@ def save_token_to_cache(token):
 
 # Input for Access Token (Frontend Only)
 cached_token = load_cached_token()
-access_token = st.sidebar.text_input("Enter Upstox Access Token", type="password", value=cached_token if cached_token else "")
+access_token = st.sidebar.text_input("Enter Access Token", type="password", value=cached_token if cached_token else "")
 
 if access_token:
     # If user entered a new token, save it
@@ -420,6 +420,9 @@ if should_run:
             f_rec = unique_futures[unique_futures['name'] == symbol].iloc[0]
             f_expiry = f_rec['expiry_date'].date()
             
+            # Extract short symbol for display
+            short_symbol = f_rec.get('asset_symbol') or f_rec.get('underlying_symbol') or symbol
+            
             opts = opts_group[opts_group['expiry_date_obj'] == f_expiry]
             
             if opts.empty: continue
@@ -444,7 +447,8 @@ if should_run:
                 'ce_key': ce_key,
                 'pe_key': pe_key,
                 'ce_lot': ce_lot,
-                'pe_lot': pe_lot
+                'pe_lot': pe_lot,
+                'display_symbol': short_symbol
             }
             
             if ce_key: option_keys_to_fetch.append(ce_key)
@@ -576,6 +580,9 @@ if should_run:
                 f_rec = unique_futures[unique_futures['name'] == symbol].iloc[0]
                 f_expiry = f_rec['expiry_date'].date()
                 
+                # Extract short symbol for display
+                short_symbol = f_rec.get('asset_symbol') or f_rec.get('underlying_symbol') or symbol
+                
                 opts = opts_group[opts_group['expiry_date_obj'] == f_expiry]
                 
                 if opts.empty: continue
@@ -600,7 +607,8 @@ if should_run:
                     'ce_key': ce_key,
                     'pe_key': pe_key,
                     'ce_lot': ce_lot,
-                    'pe_lot': pe_lot
+                    'pe_lot': pe_lot,
+                    'display_symbol': short_symbol
                 }
                 
                 if ce_key: option_keys_to_fetch.append(ce_key)
@@ -690,7 +698,7 @@ if should_run:
     final_rows = []
     for symbol, info in symbol_atm_map.items():
         row = {
-            "Stock Name": symbol,
+            "Stock Name": info.get('display_symbol', symbol),
             future_col_name: info['ref_price'],
             "ATM Strike": info['atm_strike']
         }
@@ -805,27 +813,58 @@ if 'data_snapshot' in st.session_state and st.session_state['data_snapshot']:
         df_pe = df_pe.sort_values(by="PE Change %", ascending=False)
 
     # Rename columns for compact display
+    
+    # Create combined Symbol column
+    if not df_ce.empty:
+        # Format strike to remove decimals if integer
+        df_ce['TempStrike'] = df_ce['ATM Strike'].apply(lambda x: f"{int(x)}" if x == int(x) else f"{x}")
+        # Assuming stock_col_name is 'Stock Name' in df_ce before rename
+        # But wait, rename happens AFTER this block in my previous code?
+        # No, I am editing the block where rename happens.
+        # df_ce currently has columns from ce_cols which includes stock_col_name ("Stock Name") and "ATM Strike"
+        
+        # Use underlying symbol if available, otherwise stock name
+        # Since we don't have underlying symbol column in df_results explicitly separate from Stock Name (which is Name),
+        # We will just use the Stock Name. If it's long, we might need to truncate, but user asked to combine.
+        # "JUBLFOOD 525 CE"
+        
+        df_ce['DisplaySymbol'] = df_ce[stock_col_name].astype(str) + " " + df_ce['TempStrike'] + " CE"
+        
+    if not df_pe.empty:
+        df_pe['TempStrike'] = df_pe['ATM Strike'].apply(lambda x: f"{int(x)}" if x == int(x) else f"{x}")
+        df_pe['DisplaySymbol'] = df_pe[stock_col_name].astype(str) + " " + df_pe['TempStrike'] + " PE"
+
     rename_map_ce = {
-        stock_col_name: "Stock",
+        "DisplaySymbol": "Symbol",
         snap_future_col: "Open",
-        "ATM Strike": "Strike",
         "CE LTP": "LTP",
         "CE Change %": "Chg%",
         "CE Volume": "Vol",
         "CE Contracts": "Ctr"
     }
     rename_map_pe = {
-        stock_col_name: "Stock",
+        "DisplaySymbol": "Symbol",
         snap_future_col: "Open",
-        "ATM Strike": "Strike",
         "PE LTP": "LTP",
         "PE Change %": "Chg%",
         "PE Volume": "Vol",
         "PE Contracts": "Ctr"
     }
     
-    df_ce = df_ce.rename(columns=rename_map_ce)
-    df_pe = df_pe.rename(columns=rename_map_pe)
+    # Select only the columns we want to show
+    # We drop Stock Name and ATM Strike
+    
+    if not df_ce.empty:
+        df_ce = df_ce.rename(columns=rename_map_ce)
+        # Reorder to put Symbol first
+        cols = ["Symbol", "Open", "LTP", "Chg%", "Vol", "Ctr"]
+        # Filter strictly
+        df_ce = df_ce[[c for c in cols if c in df_ce.columns]]
+        
+    if not df_pe.empty:
+        df_pe = df_pe.rename(columns=rename_map_pe)
+        cols = ["Symbol", "Open", "LTP", "Chg%", "Vol", "Ctr"]
+        df_pe = df_pe[[c for c in cols if c in df_pe.columns]]
 
     # Display Side-by-Side
     
@@ -843,15 +882,15 @@ if 'data_snapshot' in st.session_state and st.session_state['data_snapshot']:
         
         # Apply Styling
         styler_ce = df_ce.style.set_properties(**{'background-color': '#e6ffe6', 'color': 'black'})
-        # Apply white background to Stock Name
-        if "Stock" in df_ce.columns:
-            styler_ce = styler_ce.set_properties(subset=["Stock"], **{'background-color': 'white'})
+        # Apply white background to Symbol
+        if "Symbol" in df_ce.columns:
+            styler_ce = styler_ce.set_properties(subset=["Symbol"], **{'background-color': 'white'})
         
         st.dataframe(
             styler_ce,
             column_config={
+                "Symbol": st.column_config.TextColumn(label="Symbol"),
                 "Open": st.column_config.NumberColumn(format="%.2f"),
-                "Strike": st.column_config.NumberColumn(format="%g"),
                 "LTP": st.column_config.NumberColumn(format="%.2f"),
                 "Chg%": st.column_config.NumberColumn(format="%.2f%%"),
                 "Ctr": st.column_config.NumberColumn(format="%d"),
@@ -867,15 +906,15 @@ if 'data_snapshot' in st.session_state and st.session_state['data_snapshot']:
              
         # Apply Styling
         styler_pe = df_pe.style.set_properties(**{'background-color': '#ffe6e6', 'color': 'black'})
-        # Apply white background to Stock Name
-        if "Stock" in df_pe.columns:
-            styler_pe = styler_pe.set_properties(subset=["Stock"], **{'background-color': 'white'})
+        # Apply white background to Symbol
+        if "Symbol" in df_pe.columns:
+            styler_pe = styler_pe.set_properties(subset=["Symbol"], **{'background-color': 'white'})
         
         st.dataframe(
             styler_pe,
             column_config={
+                "Symbol": st.column_config.TextColumn(label="Symbol"),
                 "Open": st.column_config.NumberColumn(format="%.2f"),
-                "Strike": st.column_config.NumberColumn(format="%g"),
                 "LTP": st.column_config.NumberColumn(format="%.2f"),
                 "Chg%": st.column_config.NumberColumn(format="%.2f%%"),
                 "Ctr": st.column_config.NumberColumn(format="%d"),
